@@ -172,6 +172,7 @@ class TestCancelTask:
         assert body["cancelled"] == []
         assert len(body["skipped_running"]) == 1
 
+
 # ---------------------------------------------------------------------------
 # Tests: cancel-all-preview
 # ---------------------------------------------------------------------------

@@ -116,6 +116,7 @@ class TestExtractProvider:
 
     async def test_default_when_unresolvable(self, monkeypatch):
         """无 project、无 payload、全局未配供应商 → 回退 DEFAULT_PROVIDER（仅供限流）。"""
+
         async def _raise(*_args, **_kwargs):
             raise RuntimeError("unresolvable")
 

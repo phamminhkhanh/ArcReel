@@ -898,7 +898,7 @@ class TestDuplicateModelIdRejected:
             },
         )
         assert resp.status_code == 422
-        assert "重复" in resp.json()["detail"]
+        assert "trùng lặp" in resp.json()["detail"]
 
 
 class TestFullUpdateProvider:
@@ -1010,7 +1010,7 @@ class TestDuplicateDefaultRejected:
             },
         )
         assert resp.status_code == 422
-        assert "默认模型" in resp.json()["detail"]
+        assert "mặc định" in resp.json()["detail"]
 
     def test_single_default_per_type_allowed(self, client: TestClient):
         """不同 media_type 各一个 default，期望 201 成功。"""

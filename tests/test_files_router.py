@@ -449,7 +449,7 @@ class TestFilesRouter:
             assert change["action"] == "created"
             assert change["episode"] == 1
             assert change["important"] is True
-            assert "片段拆分" in change["label"]
+            assert "Chia đoạn" in change["label"]
 
             mock_emit.reset_mock()
 

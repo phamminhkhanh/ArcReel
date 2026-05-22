@@ -57,7 +57,7 @@ async def test_execute_generation_task_translates_image_endpoint_mismatch(monkey
     # 必须是已翻译的 zh 文案，而不是裸 code
     assert "image_endpoint_mismatch_no_t2i" not in message
     assert "gpt-image-1" in message
-    assert "图生图" in message  # zh 文案关键字
+    assert "image-to-image" in message  # vi translation keyword
 
 
 @pytest.mark.asyncio

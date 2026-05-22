@@ -10,6 +10,9 @@
   <br>
 </h1>
 
+> **Lưu ý:** Repo này có các tùy chỉnh riêng so với upstream.
+> Xem [docs/custom-changes.md](docs/custom-changes.md) để biết chi tiết.
+
 <h4 align="center">开源 AI 视频生成工作台 — 从小说到短视频，全程 AI Agent 驱动</h4>
 
 <p align="center">
@@ -45,6 +48,12 @@
 </p>
 
 ---
+## Giao tiếp với người dùng
+
+- Khi giao tiếp trực tiếp với user trong repo này, AI assistant phải dùng **tiếng Việt**.
+- Có thể giữ nguyên tên file, API, class, biến, command và thuật ngữ kỹ thuật bằng tiếng Anh khi cần chính xác.
+- Nếu trích dẫn tài liệu/runtime prompt đang viết bằng ngôn ngữ khác, hãy tóm tắt lại bằng tiếng Việt thay vì trả lời nguyên văn bằng ngôn ngữ đó.
+
 
 ## 核心能力
 

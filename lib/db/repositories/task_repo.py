@@ -178,6 +178,7 @@ class TaskRepository(BaseRepository):
     # NOTE: In multi-user mode, override this method to add user_id filtering
     async def claim_next(self, media_type: str) -> dict[str, Any] | None:
         now = utc_now()
+        orphaned_count = await self._fail_orphaned_dependencies(media_type=media_type)
 
         # Use raw SQL for the dependency join (clearer than ORM for self-join)
         raw_stmt = text("""
@@ -198,6 +199,8 @@ class TaskRepository(BaseRepository):
         result = await self.session.execute(raw_stmt, {"media_type": media_type})
         row = result.first()
         if not row:
+            if orphaned_count:
+                await self.session.commit()
             return None
 
         target_task_id = row[0]
@@ -233,12 +236,47 @@ class TaskRepository(BaseRepository):
         await self.session.commit()
         return task_data
 
+    async def _fail_orphaned_dependencies(self, *, media_type: str) -> int:
+        """Mark queued tasks whose dependency_task_id points at a missing task as failed.
+
+        This helper intentionally only flushes through _mark_failed_internal();
+        claim_next() owns the surrounding transaction and commits once.
+        """
+        raw_stmt = text("""
+            SELECT tasks.task_id, tasks.dependency_task_id
+            FROM tasks
+            LEFT JOIN tasks AS dependency
+              ON dependency.task_id = tasks.dependency_task_id
+            WHERE tasks.status = 'queued'
+              AND tasks.media_type = :media_type
+              AND tasks.dependency_task_id IS NOT NULL
+              AND dependency.task_id IS NULL
+            ORDER BY tasks.queued_at ASC
+        """)
+        result = await self.session.execute(raw_stmt, {"media_type": media_type})
+        orphan_rows = result.all()
+
+        failed = 0
+        for task_id, dependency_task_id in orphan_rows:
+            failed_task, changed = await self._mark_failed_internal(
+                task_id=task_id,
+                error_message=f"missing dependency {dependency_task_id}",
+                allowed_statuses=("queued",),
+            )
+            if changed and failed_task is not None:
+                failed += 1
+                failed += await self._cascade_failed_dependents(
+                    task_id=task_id,
+                    error_message=failed_task.get("error_message") or f"missing dependency {dependency_task_id}",
+                )
+        return failed
+
     async def mark_succeeded(self, task_id: str, result: dict[str, Any] | None = None) -> dict[str, Any] | None:
         now = utc_now()
 
-        await self.session.execute(
+        update_result = await self.session.execute(
             update(Task)
-            .where(Task.task_id == task_id)
+            .where(Task.task_id == task_id, Task.status == "running")
             .values(
                 status="succeeded",
                 result_json=_json_dumps(result or {}),
@@ -247,6 +285,11 @@ class TaskRepository(BaseRepository):
                 updated_at=now,
             )
         )
+        if rowcount(update_result) == 0:
+            res = await self.session.execute(select(Task).where(Task.task_id == task_id))
+            current_task = res.scalar_one_or_none()
+            return _task_to_dict(current_task) if current_task else None
+
         await self.session.flush()
 
         res = await self.session.execute(select(Task).where(Task.task_id == task_id))
@@ -357,22 +400,31 @@ class TaskRepository(BaseRepository):
         return cascaded
 
     async def get_cancel_preview(self, task_id: str) -> dict[str, Any]:
-        """预览取消某个任务的影响范围。"""
+        """Preview cancellation impact without promising that running work can be interrupted."""
         result = await self.session.execute(select(Task).where(Task.task_id == task_id))
         task = result.scalar_one_or_none()
         if not task:
             raise ValueError(f"任务 '{task_id}' 不存在")
-        if task.status != "queued":
-            raise ValueError("只有排队中的任务可以取消")
 
         task_summary = {
             "task_id": task.task_id,
             "task_type": task.task_type,
             "resource_id": task.resource_id,
+            "status": task.status,
         }
+        if task.status == "running":
+            return {
+                "task": task_summary,
+                "cascaded": [],
+                "skipped_running": [_task_to_dict(task)],
+                "can_cancel": False,
+                "message": "task is already running and cannot be interrupted; third-party API cost may still be incurred",
+            }
+        if task.status != "queued":
+            raise ValueError("只有排队中的任务可以取消")
 
         cascaded = await self._collect_queued_dependents(task_id)
-        return {"task": task_summary, "cascaded": cascaded}
+        return {"task": task_summary, "cascaded": cascaded, "skipped_running": [], "can_cancel": True}
 
     async def _collect_queued_dependents(self, task_id: str) -> list[dict[str, Any]]:
         """递归收集依赖于 task_id 的所有 queued 任务摘要。"""
@@ -392,11 +444,17 @@ class TaskRepository(BaseRepository):
         return dependents
 
     async def cancel_task(self, task_id: str) -> dict[str, Any]:
-        """取消一个 queued 任务，级联取消其所有 queued 依赖任务。"""
+        """Cancel a queued task and queued dependents; report running tasks explicitly as not interrupted."""
         result = await self.session.execute(select(Task).where(Task.task_id == task_id))
         task = result.scalar_one_or_none()
         if not task:
             raise ValueError(f"任务 '{task_id}' 不存在")
+        if task.status == "running":
+            return {
+                "cancelled": [],
+                "skipped_running": [_task_to_dict(task)],
+                "message": "task is already running and cannot be interrupted; third-party API cost may still be incurred",
+            }
         if task.status != "queued":
             raise ValueError("只有排队中的任务可以取消")
 

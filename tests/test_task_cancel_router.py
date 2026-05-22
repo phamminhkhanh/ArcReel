@@ -90,16 +90,23 @@ class TestCancelPreview:
         assert body["task"]["task_id"] == "t1"
         assert body["cascaded"] == []
 
-    def test_returns_400_for_running_task(self, monkeypatch):
-        fake = _FakeQueue(cancel_preview_error="只有排队中的任务可以取消")
+    def test_returns_running_preview_as_not_cancellable(self, monkeypatch):
+        preview = {
+            "task": {"task_id": "t2", "task_type": "image", "resource_id": "scene-2", "status": "running"},
+            "cascaded": [],
+            "skipped_running": [{"task_id": "t2", "status": "running"}],
+            "can_cancel": False,
+        }
+        fake = _FakeQueue(cancel_preview_result=preview)
         monkeypatch.setattr(tasks_router, "get_task_queue", lambda: fake)
 
         app = _make_app()
         with TestClient(app) as client:
             resp = client.get("/api/v1/tasks/t2/cancel-preview")
 
-        assert resp.status_code == 400
-        assert "只有排队中的任务可以取消" in resp.json()["detail"]
+        assert resp.status_code == 200
+        assert resp.json()["can_cancel"] is False
+        assert len(resp.json()["skipped_running"]) == 1
 
     def test_returns_400_for_nonexistent_task(self, monkeypatch):
         fake = _FakeQueue(cancel_preview_error="任务 'missing' 不存在")
@@ -147,17 +154,23 @@ class TestCancelTask:
         assert resp.status_code == 400
         assert "不存在" in resp.json()["detail"]
 
-    def test_returns_400_for_running_task(self, monkeypatch):
-        fake = _FakeQueue(cancel_task_error="只有排队中的任务可以取消")
+    def test_reports_running_task_as_skipped(self, monkeypatch):
+        result = {
+            "cancelled": [],
+            "skipped_running": [{"task_id": "running-task", "status": "running"}],
+            "message": "task is already running",
+        }
+        fake = _FakeQueue(cancel_task_result=result)
         monkeypatch.setattr(tasks_router, "get_task_queue", lambda: fake)
 
         app = _make_app()
         with TestClient(app) as client:
             resp = client.post("/api/v1/tasks/running-task/cancel")
 
-        assert resp.status_code == 400
-        assert "只有排队中的任务可以取消" in resp.json()["detail"]
-
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["cancelled"] == []
+        assert len(body["skipped_running"]) == 1
 
 # ---------------------------------------------------------------------------
 # Tests: cancel-all-preview

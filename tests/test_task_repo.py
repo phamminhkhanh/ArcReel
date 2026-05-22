@@ -274,7 +274,7 @@ class TestTaskRepository:
         assert dep_task["status"] == "cancelled"
         assert dep_task["cancelled_by"] == "cascade"
 
-    async def test_cancel_running_task_rejected(self, db_session):
+    async def test_cancel_running_task_reports_skipped_not_cancelled(self, db_session):
         repo = TaskRepository(db_session)
 
         task = await repo.enqueue(
@@ -287,8 +287,52 @@ class TestTaskRepository:
         )
         await repo.claim_next("image")
 
-        with pytest.raises(ValueError, match="只有排队中的任务可以取消"):
-            await repo.cancel_task(task["task_id"])
+        result = await repo.cancel_task(task["task_id"])
+        assert result["cancelled"] == []
+        assert len(result["skipped_running"]) == 1
+
+        running = await repo.get(task["task_id"])
+        assert running["status"] == "running"
+
+    async def test_mark_succeeded_does_not_override_cancelled_task(self, db_session):
+        repo = TaskRepository(db_session)
+
+        task = await repo.enqueue(
+            project_name="demo",
+            task_type="storyboard",
+            media_type="image",
+            resource_id="E1S01",
+            payload={},
+            script_file="ep1.json",
+        )
+        await repo.cancel_task(task["task_id"])
+
+        result = await repo.mark_succeeded(task["task_id"], {"file": "late.png"})
+        assert result["status"] == "cancelled"
+
+        fetched = await repo.get(task["task_id"])
+        assert fetched["status"] == "cancelled"
+        assert fetched["result"] == {}
+
+    async def test_claim_next_marks_orphan_dependency_failed(self, db_session):
+        repo = TaskRepository(db_session)
+
+        task = await repo.enqueue(
+            project_name="demo",
+            task_type="storyboard",
+            media_type="image",
+            resource_id="E1S01",
+            payload={},
+            script_file="ep1.json",
+            dependency_task_id="missing-task-id",
+        )
+
+        claimed = await repo.claim_next("image")
+        assert claimed is None
+
+        fetched = await repo.get(task["task_id"])
+        assert fetched["status"] == "failed"
+        assert "missing dependency missing-task-id" in fetched["error_message"]
 
     async def test_cancel_preview(self, db_session):
         repo = TaskRepository(db_session)

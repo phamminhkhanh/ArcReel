@@ -173,9 +173,11 @@ async def enqueue_task_only(
 ) -> dict[str, Any]:
     queue = get_generation_queue()
 
-    if not await queue.is_worker_online(name=lease_name):
-        raise WorkerOfflineError("queue worker is offline")
-
+    # Intentionally do not require the worker to be online before enqueueing.
+    # This preserves async queue semantics: producers can submit durable work
+    # while the worker is starting/restarting. Callers that need completion
+    # should use wait_for_task()/enqueue_and_wait(), where worker-offline is
+    # reported after the configured grace period.
     enqueue_result = await queue.enqueue_task(
         project_name=project_name,
         task_type=task_type,

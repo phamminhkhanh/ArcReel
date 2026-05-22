@@ -7,6 +7,10 @@
   "permissions": {
     "allow": [
       "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(cp:*)",
+      "Bash(sed:*)",
+      "Bash(which:*)",
       "Bash(uv run python -m pytest:*)",
       "Bash(uv run pytest:*)",
       "Bash(uv run ruff check:*)",
@@ -15,7 +19,11 @@
       "Bash(uv run python -m alembic:*)",
       "Bash(uv run uvicorn:*)",
       "Bash(uv sync:*)",
+      "Bash(uv run python:*)",
+      "Bash(uv run python -m:*)",
       "Bash(uv lock:*)",
+      "Bash(uv pip:*)",
+      "Bash(UV_NATIVE_TLS=1:*)",
       "Bash(pnpm build:*)",
       "Bash(pnpm test:*)",
       "Bash(pnpm check:*)",

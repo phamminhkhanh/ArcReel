@@ -18,16 +18,19 @@ from lib.generation_queue_client import (
 
 
 class TestGenerationQueueClient:
-    async def test_enqueue_task_only_requires_online_worker(self, generation_queue):
-        with pytest.raises(WorkerOfflineError):
-            await enqueue_task_only(
-                project_name="demo",
-                task_type="storyboard",
-                media_type="image",
-                resource_id="S00",
-                payload={"prompt": "p"},
-                script_file="episode_01.json",
-            )
+    async def test_enqueue_task_only_does_not_require_online_worker(self, generation_queue):
+        result = await enqueue_task_only(
+            project_name="demo",
+            task_type="storyboard",
+            media_type="image",
+            resource_id="S00",
+            payload={"prompt": "p"},
+            script_file="episode_01.json",
+        )
+
+        task = await generation_queue.get_task(result["task_id"])
+        assert task is not None
+        assert task["status"] == "queued"
 
     async def test_enqueue_task_only_enqueues_when_worker_online(self, generation_queue):
         await generation_queue.acquire_or_renew_worker_lease(

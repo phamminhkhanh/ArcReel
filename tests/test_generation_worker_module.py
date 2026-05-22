@@ -114,8 +114,12 @@ class TestExtractProvider:
         task = {"payload": {"image_provider": "gemini-vertex"}, "task_type": "storyboard"}
         assert await _extract_provider(task) == "gemini-vertex"
 
-    async def test_default_when_unresolvable(self):
+    async def test_default_when_unresolvable(self, monkeypatch):
         """无 project、无 payload、全局未配供应商 → 回退 DEFAULT_PROVIDER（仅供限流）。"""
+        async def _raise(*_args, **_kwargs):
+            raise RuntimeError("unresolvable")
+
+        monkeypatch.setattr("lib.config.resolver.ConfigResolver.resolve_image_backend", _raise)
         task = {"payload": {}}
         assert await _extract_provider(task) == DEFAULT_PROVIDER
 
@@ -331,3 +335,59 @@ class TestGenerationWorker:
             ],
             return_exceptions=True,
         )
+
+    @pytest.mark.asyncio
+    async def test_claim_tasks_skips_full_provider_pool_without_blocking_other_provider(self, monkeypatch):
+        class _ClaimableQueue(_FakeQueue):
+            def __init__(self):
+                super().__init__()
+                self._tasks = [
+                    {
+                        "task_id": "gemini-full",
+                        "task_type": "gen_image",
+                        "media_type": "image",
+                        "payload": {"image_provider": "gemini-aistudio"},
+                    },
+                    {
+                        "task_id": "openai-free",
+                        "task_type": "gen_image",
+                        "media_type": "image",
+                        "payload": {"image_provider": "openai"},
+                    },
+                ]
+                self.requeued = []
+
+            async def claim_next_task(self, media_type):  # type: ignore[override]
+                for i, task in enumerate(self._tasks):
+                    if task["media_type"] == media_type:
+                        return self._tasks.pop(i)
+                return None
+
+        queue = _ClaimableQueue()
+        pools = {
+            "gemini-aistudio": ProviderPool(provider_id="gemini-aistudio", image_max=1, video_max=0),
+            "openai": ProviderPool(provider_id="openai", image_max=1, video_max=0),
+        }
+        loop = asyncio.get_running_loop()
+        dummy = loop.create_future()
+        pools["gemini-aistudio"].image_inflight["already-running"] = dummy
+
+        worker = GenerationWorker(queue=queue, pools=pools)
+
+        async def _fake_requeue(task_id: str):
+            queue.requeued.append(task_id)
+
+        async def _fake_execute(task):
+            return {"ok": True}
+
+        monkeypatch.setattr(worker, "_requeue_single_task", _fake_requeue)
+        monkeypatch.setattr("server.services.generation_tasks.execute_generation_task", _fake_execute)
+
+        claimed = await worker._claim_tasks()
+
+        assert claimed
+        assert queue.requeued == ["gemini-full"]
+        assert "openai-free" in pools["openai"].image_inflight
+
+        dummy.cancel()
+        await asyncio.gather(*pools["openai"].image_inflight.values(), return_exceptions=True)

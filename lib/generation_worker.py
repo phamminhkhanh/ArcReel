@@ -375,8 +375,8 @@ class GenerationWorker:
         """Claim tasks from queue and route to per-provider pools.
 
         For each media_type, claim the next FIFO task. If the task's provider
-        pool has room, dispatch it. If the pool is full, requeue it and stop
-        claiming that media_type (since we'd keep getting the same task).
+        pool has room, dispatch it. If that provider is full, move the task to
+        the back and keep looking for tasks from providers with free capacity.
         """
         claimed_any = False
 
@@ -384,6 +384,8 @@ class GenerationWorker:
             if not self._any_pool_has_room(media_type):
                 continue
 
+            skipped_full_pools = 0
+            max_full_pool_skips = 100
             while True:
                 task = await self.queue.claim_next_task(media_type=media_type)
                 if not task:
@@ -415,8 +417,9 @@ class GenerationWorker:
                     continue
 
                 if not has_room:
-                    # Provider pool is full — requeue the task and stop
-                    # claiming this media_type (FIFO means we'd get it again).
+                    # Provider pool is full: move this task behind older
+                    # queued tasks and continue, avoiding head-of-line blocking
+                    # across providers on the same media lane.
                     logger.info(
                         "供应商 %s 的 %s 池已满，任务 %s 放回队列",
                         provider_id,
@@ -424,8 +427,15 @@ class GenerationWorker:
                         task["task_id"],
                     )
                     await self._requeue_single_task(task["task_id"])
-                    break
-
+                    skipped_full_pools += 1
+                    if skipped_full_pools >= max_full_pool_skips:
+                        logger.warning(
+                            "连续跳过 %d 个 %s 任务（供应商池已满），暂停本轮认领",
+                            skipped_full_pools,
+                            media_type,
+                        )
+                        break
+                    continue
                 # Dispatch to pool
                 claimed_any = True
                 inflight = pool.image_inflight if media_type == "image" else pool.video_inflight
@@ -456,6 +466,7 @@ class GenerationWorker:
                     .where(Task.task_id == task_id, Task.status == "running")
                     .values(
                         status="queued",
+                        queued_at=datetime.now(UTC),
                         started_at=None,
                         updated_at=datetime.now(UTC),
                     )
